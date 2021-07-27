@@ -171,11 +171,10 @@ WITH
   --- This table filters out visitors that completed the Journey i.e got to the Order Placement Screen.
   final AS (
   SELECT
-    * EXCEPT(locationLon,
-      locationLat),
-    CONCAT(coalesce(locationLon),' ',coalesce(locationLat)) AS curr_cord,
+    *,
+    CONCAT(coalesce(locationLat),',',coalesce(locationLon)) AS curr_cord,
     --This Function extracts the previous cell value in a given row, this would be useful when checking for Change in address
-    LAG(CONCAT(coalesce(locationLon),' ',coalesce(locationLat))) OVER(PARTITION BY fullvisitorid, visitId, visitStartTime, rank ORDER BY time ASC) AS prev_cord
+    LAG(CONCAT(coalesce(locationLat),',',coalesce(locationLon))) OVER(PARTITION BY fullvisitorid, visitId, visitStartTime, rank ORDER BY time ASC) AS prev_cord
   FROM
     journey
     --Filter for only customers that reached the last funnel
@@ -196,8 +195,7 @@ SELECT
     WHEN screen IN ('checkout') THEN 'Checkout'
     WHEN screen IN ('order_confirmation') THEN 'Order Placement'
 END
-  AS screen,
-  curr_cord,
+  AS screen,curr_cord,
   prev_cord,
   CASE
     WHEN eventAction IN ('address.submitted', 'address_update.submitted') AND curr_cord != prev_cord THEN 'Changed'
