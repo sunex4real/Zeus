@@ -104,6 +104,7 @@ how often users tend to change their location in the beginning of their journey 
 like home and listing) versus in checkout and on order placement and demonstrate the
 the deviation between earlier and later inputs (if any) in terms of coordinates change.
 */
+
 WITH
   -- This Temporal Table Structures the Base table and extract the field values in the custom dimention column
   DENORM_TABLE AS (
@@ -113,6 +114,7 @@ WITH
     visitStartTime,
     date,
     eventAction,
+    transactionid,
     time,
     (
     SELECT
@@ -135,83 +137,66 @@ WITH
       UNNEST(customDimensions)
     WHERE
       INDEX = 16) AS locationCity,
-    (
-    SELECT
-      value
-    FROM
-      UNNEST(customDimensions)
-    WHERE
-      INDEX = 18) AS locationLon,
-    (
-    SELECT
-      value
-    FROM
-      UNNEST(customDimensions)
-    WHERE
-      INDEX = 19) AS locationLat
+    SAFE_CAST((
+      SELECT
+        value
+      FROM
+        UNNEST(customDimensions)
+      WHERE
+        INDEX = 18) AS FLOAT64) AS locationLon,
+    SAFE_CAST((
+      SELECT
+        value
+      FROM
+        UNNEST(customDimensions)
+      WHERE
+        INDEX = 19) AS FLOAT64) AS locationLat
   FROM
     `dhh-analytics-hiringspace.GoogleAnalyticsSample.ga_sessions_export` ga,
-    UNNEST(ga.hit) ),
-  -- This Table Creates the Journey and Ranks them in sequencial order e.g Home, Checkout, Order Placement
-  journey AS (
+    UNNEST(ga.hit)),
+  -- This Table Creates the Journey 
+  FUNNEL AS (
   SELECT
-    *,
-    DENSE_RANK() OVER(PARTITION BY fullvisitorid, visitId, visitStartTime ORDER BY CASE WHEN screen IN ('home', 'shop_list') THEN '1st Stage'
-        WHEN screen IN ('checkout') THEN '2nd Stage'
-        WHEN screen IN ('order_confirmation') THEN '3rd Stage'
-    END
-      ) AS rank
+    * EXCEPT(screen),
+    CASE
+      WHEN eventAction IN ( 'address.submitted', 'address_update.submitted') THEN LAG(CONCAT(coalesce(locationLat),',',coalesce(locationLon))) OVER(PARTITION BY fullvisitorid, visitStartTime ORDER BY time ASC)
+  END
+    prev_loc,
+    CASE
+      WHEN screen IN ('home', 'shop_list') THEN 'Home'
+      WHEN screen IN ('checkout') THEN 'Checkout'
+      WHEN screen IN ('order_confirmation') THEN 'Order Placement'
+  END
+    AS screen
   FROM
     denorm_table
   WHERE
     screen IN ('order_confirmation',
       'home',
       'shop_list',
-      'checkout')),
-  --- This table filters out visitors that completed the Journey i.e got to the Order Placement Screen.
-  visitors_reaching_last_journey AS (
+      'checkout') ),
+  -- Checking for Address Change by comparing the previous record of the cordinates
+  ADDRESS_CHANGE_FUNNEL AS (
   SELECT
     *,
-    CONCAT(coalesce(locationLat),',',coalesce(locationLon)) AS curr_cord,
-    --This Function extracts the previous cell value in a given row, this would be useful when checking for Change in address
-    LAG(CONCAT(coalesce(locationLat),',',coalesce(locationLon))) OVER(PARTITION BY fullvisitorid, visitId, visitStartTime, rank ORDER BY time ASC) AS prev_cord
+    CASE
+      WHEN eventAction IN ('address.submitted', 'address_update.submitted') AND CONCAT(coalesce(locationLat),',',coalesce(locationLon)) != prev_loc THEN 1
+    ELSE
+    0
+  END
+    AS change_flag
   FROM
-    journey
-    --Filter for only customers that reached the last funnel
-  WHERE
-    CONCAT(coalesce(fullvisitorid),' ',coalesce(visitStartTime)) IN (
-    SELECT
-      CONCAT(coalesce(fullvisitorid),' ',coalesce(visitStartTime))
-    FROM
-      journey
-    WHERE
-      rank = 3) ) 
-SELECT
-  fullvisitorid,
-  visitStartTime,
-  ST_GeogPoint(SAFE_CAST(locationlon AS float64),
-    SAFE_CAST(locationLat AS float64)) AS geo_point,
-  eventAction,
-  CASE
-    WHEN screen IN ('home', 'shop_list') THEN 'Home'
-    WHEN screen IN ('checkout') THEN 'Checkout'
-    WHEN screen IN ('order_confirmation') THEN 'Order Placement'
-END
-  AS screen,
-  curr_cord,
-  prev_cord,
-  CASE
-    WHEN eventAction IN ('address.submitted', 'address_update.submitted') AND curr_cord != prev_cord THEN 'Changed'
-  ELSE
-  'Not Changed'
-END
-  address_change_flag
-FROM
-  visitors_reaching_last_journey 
-ORDER BY
-  fullvisitorid,
-  visitStartTime,
-  rank ASC
+    FUNNEL
+    )
+  -- Aggregating count of Address Change
+  SELECT
+    screen, count(distinct concat(fullvisitorid,
+    visitStartTime)) as sessions,
+    SUM(change_flag) AS times,
+    COUNT(1) AS home_event_count
+  FROM
+    ADDRESS_CHANGE_FUNNEL
+  GROUP BY screen
 
 
 
@@ -271,7 +256,7 @@ WITH
   FROM
     `dhh-analytics-hiringspace.GoogleAnalyticsSample.ga_sessions_export` ga,
     UNNEST(ga.hit)),
-  -- This Table Creates the Journey and Ranks them in sequencial order e.g Home, Checkout, Order Placement
+  -- This Table Creates the Journey 
   FUNNEL AS (
   SELECT
     * EXCEPT(screen),
