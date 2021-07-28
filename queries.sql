@@ -231,6 +231,7 @@ WITH
     visitStartTime,
     date,
     eventAction,
+    transactionid,
     time,
     (
     SELECT
@@ -269,101 +270,96 @@ WITH
         INDEX = 19) AS FLOAT64) AS locationLat
   FROM
     `dhh-analytics-hiringspace.GoogleAnalyticsSample.ga_sessions_export` ga,
-    UNNEST(ga.hit) ),
+    UNNEST(ga.hit)),
   -- This Table Creates the Journey and Ranks them in sequencial order e.g Home, Checkout, Order Placement
-  journey AS (
+  FUNNEL AS (
   SELECT
-    *,
-    DENSE_RANK() OVER(PARTITION BY fullvisitorid, visitId, visitStartTime ORDER BY CASE WHEN screen IN ('home', 'shop_list') THEN '1st Stage'
-        WHEN screen IN ('checkout') THEN '2nd Stage'
-        WHEN screen IN ('order_confirmation') THEN '3rd Stage'
-    END
-      ) AS rank
+    * EXCEPT(screen),
+    CASE
+      WHEN eventAction IN ( 'address.submitted', 'address_update.submitted') THEN LAG(CONCAT(coalesce(locationLat),',',coalesce(locationLon))) OVER(PARTITION BY fullvisitorid, visitStartTime ORDER BY time ASC)
+  END
+    prev_loc,
+    CASE
+      WHEN screen IN ('home', 'shop_list') THEN 'Home'
+      WHEN screen IN ('checkout') THEN 'Checkout'
+      WHEN screen IN ('order_confirmation') THEN 'Order Placement'
+  END
+    AS screen
   FROM
     denorm_table
   WHERE
     screen IN ('order_confirmation',
       'home',
       'shop_list',
-      'checkout')),
-  --- This table filters out visitors that completed the Journey i.e got to the Order Placement Screen.
-  visitors_reaching_last_journey AS (
+      'checkout') ),
+  -- Checking for Address Change by comparing the previous record of the cordinates
+  ADDRESS_CHANGE_FUNNEL AS (
   SELECT
     *,
-    CONCAT(coalesce(locationLat),',',coalesce(locationLon)) AS curr_cord,
-    --This Function extracts the previous cell value in a given row, this would be useful when checking for Change in address
-    LAG(CONCAT(coalesce(locationLat),',',coalesce(locationLon))) OVER(PARTITION BY fullvisitorid, visitId, visitStartTime, rank ORDER BY time ASC) AS prev_cord
-  FROM
-    journey
-    --Filter for only customers that reached the last funnel
-  WHERE
-    CONCAT(coalesce(fullvisitorid),' ',coalesce(visitStartTime)) IN (
-    SELECT
-      CONCAT(coalesce(fullvisitorid),' ',coalesce(visitStartTime))
-    FROM
-      journey
-    WHERE
-      rank = 3) ),
-  change_flag_table AS (
-  SELECT
-    fullvisitorid,
-    visitStartTime,
-    ST_GeogPoint(SAFE_CAST(locationlon AS float64),
-      SAFE_CAST(locationLat AS float64)) AS geo_point,
-    eventAction,
     CASE
-      WHEN screen IN ('home', 'shop_list') THEN 'Home'
-      WHEN screen IN ('checkout') THEN 'Checkout'
-      WHEN screen IN ('order_confirmation') THEN 'Order Placement'
-  END
-    AS screen,
-    curr_cord,
-    prev_cord,
-    CASE
-      WHEN eventAction IN ('address.submitted', 'address_update.submitted') AND curr_cord != prev_cord THEN 'Changed'
+      WHEN eventAction IN ('address.submitted', 'address_update.submitted') AND CONCAT(coalesce(locationLat),',',coalesce(locationLon)) != prev_loc THEN 1
     ELSE
-    'Not Changed'
+    0
   END
-    address_change_flag,
-    time
+    AS change_flag
   FROM
-    visitors_reaching_last_journey
-  ORDER BY
+    FUNNEL
+    ),
+  -- Aggregating count of Address Change
+  FUNNEL_ADDRESS_CHANGE_AGG AS (
+  SELECT
     fullvisitorid,
     visitStartTime,
-    rank ASC),
-  latest_cord_of_vistors_that_changed_address AS (
-  SELECT
-    *,
-    ROW_NUMBER() OVER(PARTITION BY fullvisitorid, visitStartTime ORDER BY time DESC) AS rank
+    SUM(change_flag) AS times,
+    COUNT(1) AS home_event_count,
+    COUNT(DISTINCT screen) AS journey
   FROM
-    change_flag_table
-  WHERE
-    address_change_flag = 'Changed')
-SELECT
-   * except(rank)
-FROM
-  latest_cord_of_vistors_that_changed_address tb
-JOIN (
-  SELECT
-    ST_ASTEXT(geopointCustomer) geopointCustomer,
-    SUM(CASE
-        WHEN ST_DISTANCE(geopointCustomer, geopointDropoff) <= 10 THEN 1
-      ELSE
-      0
-    END
-      ) AS no_of_orders_within_10_mtrs
-  FROM
-    `dhh-analytics-hiringspace.BackendDataSample.transactionalData`
-  WHERE
-    ((geopointCustomer IS NOT NULL
-        AND geopointDropoff IS NOT NULL))
+    ADDRESS_CHANGE_FUNNEL
   GROUP BY
-    geopointCustomer
+    fullvisitorid,
+    visitStartTime
   HAVING
-    no_of_orders_within_10_mtrs > 0 ) txn
+    journey = 3 )
+SELECT
+  hcg.*,
+  txn.locationLat,
+  txn.locationLon,
+  transactionid,
+  CASE
+    WHEN times = 0 THEN FALSE
+  ELSE
+  TRUE
+END
+  AS address_changed,
+  CASE
+    WHEN tr.frontendOrderId IS NULL THEN FALSE
+  ELSE
+  TRUE
+END
+  AS order_placed,
+  CASE
+    WHEN tr.geopointDropoff IS NULL THEN FALSE
+  ELSE
+  TRUE
+END
+  AS order_delivered
+FROM
+  FUNNEL_ADDRESS_CHANGE_AGG hcg
+LEFT JOIN (
+  SELECT
+    DISTINCT fullvisitorid,
+    visitStartTime,
+    transactionid,
+    locationLat,
+    locationLon
+  FROM
+    denorm_table
+  WHERE
+    transactionid IS NOT NULL ) txn
 ON
-  ST_CONTAINS(ST_GEOGFROMTEXT(txn.geopointCustomer),
-    tb.geo_point )
-WHERE
-  rank = 1
+  CONCAT(txn.fullvisitorid, txn.visitStartTime) = CONCAT(hcg.fullvisitorid, hcg.visitStartTime)
+LEFT JOIN
+  `dhh-analytics-hiringspace.BackendDataSample.transactionalData` tr
+ON
+  txn.transactionid = tr.frontendOrderId
+  AND tr.declinereason_code IS NULL
