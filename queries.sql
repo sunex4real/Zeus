@@ -189,13 +189,16 @@ WITH
 SELECT
   fullvisitorid,
   visitStartTime,
+  ST_GeogPoint(SAFE_CAST(locationlon AS float64),
+    SAFE_CAST(locationLat AS float64)) AS geo_point,
   eventAction,
   CASE
     WHEN screen IN ('home', 'shop_list') THEN 'Home'
     WHEN screen IN ('checkout') THEN 'Checkout'
     WHEN screen IN ('order_confirmation') THEN 'Order Placement'
 END
-  AS screen,curr_cord,
+  AS screen,
+  curr_cord,
   prev_cord,
   CASE
     WHEN eventAction IN ('address.submitted', 'address_update.submitted') AND curr_cord != prev_cord THEN 'Changed'
