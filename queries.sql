@@ -8,10 +8,10 @@ FROM
 
 /* How many sessions does each visitor create? */
 SELECT
-  COUNT(DISTINCT CONCAT(fullvisitorid, CAST(visitid AS string))) / COUNT(DISTINCT fullvisitorid) AS sessions_per_user
+  fullVisitorId, COUNT(DISTINCT CONCAT(fullvisitorid, CAST(visitid AS string))) as total_session
 FROM
   `dhh-analytics-hiringspace.GoogleAnalyticsSample.ga_sessions_export`
-
+GROUP BY fullVisitorId
 
 /* How much time does it take on average to reach the order_confirmation screen per
 session (in minutes)? */
@@ -23,11 +23,6 @@ WITH
     visitNumber,
     visitId,
     visitStartTime,
-    date,
-    eventCategory,
-    eventAction,
-    screenName,
-    landingScreenName,
     time,
     (
     SELECT
@@ -35,49 +30,7 @@ WITH
     FROM
       UNNEST(customDimensions)
     WHERE
-      INDEX = 11) AS screen,
-    (
-    SELECT
-      value
-    FROM
-      UNNEST(customDimensions)
-    WHERE
-      INDEX = 15) AS locationCountry,
-    (
-    SELECT
-      value
-    FROM
-      UNNEST(customDimensions)
-    WHERE
-      INDEX = 16) AS locationCity,
-    (
-    SELECT
-      value
-    FROM
-      UNNEST(customDimensions)
-    WHERE
-      INDEX = 18) AS locationLon,
-    (
-    SELECT
-      value
-    FROM
-      UNNEST(customDimensions)
-    WHERE
-      INDEX = 19) AS locationLat,
-    (
-    SELECT
-      value
-    FROM
-      UNNEST(customDimensions)
-    WHERE
-      INDEX = 25) AS orderPaymentMethod,
-    (
-    SELECT
-      value
-    FROM
-      UNNEST(customDimensions)
-    WHERE
-      INDEX = 40) AS userLoggedIn
+      INDEX = 11) AS screen
   FROM
     `dhh-analytics-hiringspace.GoogleAnalyticsSample.ga_sessions_export` ga,
     UNNEST(ga.hit) ),
@@ -90,7 +43,7 @@ WITH
   WHERE
     screen = 'order_confirmation' )
 SELECT
-  ROUND(SUM(time / 60000) / COUNT(DISTINCT CONCAT(fullvisitorid, CAST(visitid AS string)))) AS avg_time_mins
+  ROUND(AVG(time / 60000)) AS avg_time_mins
 FROM
   order_confirmation
 WHERE
@@ -154,7 +107,7 @@ WITH
   FROM
     `dhh-analytics-hiringspace.GoogleAnalyticsSample.ga_sessions_export` ga,
     UNNEST(ga.hit)),
-  -- This Table Creates the Journey 
+  -- This Table Creates the Journey
   FUNNEL AS (
   SELECT
     * EXCEPT(screen),
@@ -174,8 +127,9 @@ WITH
     screen IN ('order_confirmation',
       'home',
       'shop_list',
-      'checkout') ),
-  -- Checking for Address Change by comparing the previous record of the cordinates
+      'checkout')
+    AND (locationLat IS NOT NULL
+      OR locationLon IS NOT NULL) ),
   ADDRESS_CHANGE_FUNNEL AS (
   SELECT
     *,
@@ -186,17 +140,17 @@ WITH
   END
     AS change_flag
   FROM
-    FUNNEL
-    )
+    FUNNEL )
   -- Aggregating count of Address Change
-  SELECT
-    screen, count(distinct concat(fullvisitorid,
-    visitStartTime)) as sessions,
-    SUM(change_flag) AS times,
-    COUNT(1) AS home_event_count
-  FROM
-    ADDRESS_CHANGE_FUNNEL
-  GROUP BY screen
+SELECT
+  screen,
+  COUNT(DISTINCT CONCAT(fullvisitorid, visitStartTime)) AS sessions,
+  SUM(change_flag) AS times,
+  COUNT(1) AS home_event_count
+FROM
+  ADDRESS_CHANGE_FUNNEL
+GROUP BY
+  screen
 
 
 
@@ -212,6 +166,7 @@ WITH
   DENORM_TABLE AS (
   SELECT
     fullvisitorid,
+    CONCAT(fullvisitorid, CAST(visitStartTime AS string)) AS SESSION,
     visitId,
     visitStartTime,
     date,
@@ -256,7 +211,7 @@ WITH
   FROM
     `dhh-analytics-hiringspace.GoogleAnalyticsSample.ga_sessions_export` ga,
     UNNEST(ga.hit)),
-  -- This Table Creates the Journey 
+  -- This Table Creates the Journey
   FUNNEL AS (
   SELECT
     * EXCEPT(screen),
@@ -276,8 +231,9 @@ WITH
     screen IN ('order_confirmation',
       'home',
       'shop_list',
-      'checkout') ),
-  -- Checking for Address Change by comparing the previous record of the cordinates
+      'checkout')
+    AND (locationLat IS NOT NULL
+      OR locationLon IS NOT NULL)),
   ADDRESS_CHANGE_FUNNEL AS (
   SELECT
     *,
@@ -288,23 +244,16 @@ WITH
   END
     AS change_flag
   FROM
-    FUNNEL
-    ),
+    FUNNEL ),
   -- Aggregating count of Address Change
   FUNNEL_ADDRESS_CHANGE_AGG AS (
   SELECT
-    fullvisitorid,
-    visitStartTime,
-    SUM(change_flag) AS times,
-    COUNT(1) AS home_event_count,
-    COUNT(DISTINCT screen) AS journey
+    SESSION,
+    SUM(change_flag) AS times
   FROM
     ADDRESS_CHANGE_FUNNEL
   GROUP BY
-    fullvisitorid,
-    visitStartTime
-  HAVING
-    journey = 3 )
+    SESSION)
 SELECT
   hcg.*,
   txn.locationLat,
@@ -332,17 +281,22 @@ FROM
   FUNNEL_ADDRESS_CHANGE_AGG hcg
 LEFT JOIN (
   SELECT
-    DISTINCT fullvisitorid,
-    visitStartTime,
-    transactionid,
-    locationLat,
-    locationLon
+    SESSION,
+    LOCATIONLON,
+    LOCATIONLAT,
+    TRANSACTIONID,
+    MAX(TIME) AS TIME
   FROM
     denorm_table
   WHERE
-    transactionid IS NOT NULL ) txn
+    transactionid IS NOT NULL
+  GROUP BY
+    SESSION,
+    LOCATIONLON,
+    LOCATIONLAT,
+    TRANSACTIONID ) txn
 ON
-  CONCAT(txn.fullvisitorid, txn.visitStartTime) = CONCAT(hcg.fullvisitorid, hcg.visitStartTime)
+  TXN.SESSION = HCG.SESSION
 LEFT JOIN
   `dhh-analytics-hiringspace.BackendDataSample.transactionalData` tr
 ON
