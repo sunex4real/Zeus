@@ -1,15 +1,19 @@
 import dask.dataframe as dd
 import pyarrow
+import os
+
 
 def fetch_data_from_gcs(gcs_path):
-    data = dd.dataframe.read_parquet(gcs_path, engine='pyarrow')
-    return data
-
-def check_address_change(events):
     pass
 
-def get_transaction_details(frontendid):
+
+def get_session_details(customer_data):
     pass
 
-def main():
+
+def get_transaction_details(transactionid):
+    pass
+
+
+def main(fullvisitorid):
     pass
