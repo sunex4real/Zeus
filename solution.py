@@ -47,7 +47,22 @@ def get_session_details(customer_data):
 
 
 def get_transaction_details(transactionid):
-    pass
+    """
+    This function takes a str input of the transactionid
+    and returns the details of the transaction.
+    :param transactionid: transactionid generated from the session
+    :return tuple: (Boolean, Boolean) where index 0 is for order placement
+    and index 1 is for order delivered.
+    """
+    # Fetch data from gcs
+    transaction_data = fetch_data_from_gcs(TXN_PATH)
+    transaction_data = transaction_data[transaction_data.frontendOrderId == transactionid]
+    # Check if order was received on the backend
+    if len(transaction_data.index) == 0:
+        return(False, False)
+    # Check if order was delivered
+    order_delivered = True if transaction_data['declinereason_code'].values[0] is None else False
+    return (True, order_delivered)
 
 
 def main(fullvisitorid):
