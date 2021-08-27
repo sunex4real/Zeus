@@ -5,8 +5,12 @@
   "python.formatting.provider": "black",
   "python.formatting.blackArgs": [
       "--line-length",
-      "79"
+      "120"
   ],
+  "python.linting.flake8Args": [
+      "--max-line-length=120"
+  ],
+
   "editor.formatOnSave": true,
   "[html]": {
       "editor.formatOnSave": false

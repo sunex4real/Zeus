@@ -52,17 +52,10 @@ def get_session_details(customer_data):
             [
                 lat_lon["value"]
                 for lat_lon in custom_dimensions
-                if lat_lon["index"] in (19, 18)
-                and lat_lon["value"] not in ("NA")
+                if lat_lon["index"] in (19, 18) and lat_lon["value"] not in ("NA")
             ]
         )
-        transactionid.update(
-            [
-                transaction["value"]
-                for transaction in custom_dimensions
-                if transaction["index"] == 36
-            ]
-        )
+        transactionid.update([transaction["value"] for transaction in custom_dimensions if transaction["index"] == 36])
 
     if len(lat_lon_cordinates) > 2:
         return (True, transactionid.pop())
@@ -86,18 +79,12 @@ def get_transaction_details(transactionid):
     """
     # Fetch data from gcs
     transaction_data = fetch_data_from_gcs(TXN_PATH)
-    transaction_data = transaction_data[
-        transaction_data.frontendOrderId == transactionid
-    ]
+    transaction_data = transaction_data[transaction_data.frontendOrderId == transactionid]
     # Check if order was received on the backend
     if len(transaction_data.index) == 0:
         return (False, False)
     # Check if order was delivered
-    order_delivered = (
-        True
-        if transaction_data["declinereason_code"].values[0] is None
-        else False
-    )
+    order_delivered = True if transaction_data["declinereason_code"].values[0] is None else False
     return (True, order_delivered)
 
 
@@ -120,17 +107,13 @@ def main(userid):
         return response
     if isinstance(userid, str):
         google_analytics_data = fetch_data_from_gcs(GA_PATH)
-        customer_data = google_analytics_data[
-            google_analytics_data.fullvisitorid == userid
-        ]
+        customer_data = google_analytics_data[google_analytics_data.fullvisitorid == userid]
         # input validation, return empty response if userid not in parquet
         if len(customer_data.index) == 0:
             return response
 
         customer_data = customer_data.nlargest(1, "visitStartTime")
-        address_changed, transactionid = get_session_details(
-            customer_data["hit"]
-        )
+        address_changed, transactionid = get_session_details(customer_data["hit"])
         order_placed, order_delivered = get_transaction_details(transactionid)
         response.update(
             {
