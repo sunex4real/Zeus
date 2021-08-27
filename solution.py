@@ -121,7 +121,7 @@ def main(userid):
     if isinstance(userid, str):
         google_analytics_data = fetch_data_from_gcs(GA_PATH)
         customer_data = google_analytics_data[
-            google_analytics_data.userid == userid
+            google_analytics_data.fullvisitorid == userid
         ]
         # input validation, return empty response if userid not in parquet
         if len(customer_data.index) == 0:
