@@ -23,13 +23,13 @@ def get_session_details(customer_data):
     This function takes the customer dataframe as input
     then convert to python dictionary for efficient processing
     to calculate the coordinates change during the session
-    and also the transactionid if exist
+    and also the transactionid if exist.
 
     :param customer_data: Customer Dataframe that contains the
     actions generated in the session.
     :return tuple: (Boolean, str) where index 0 is the flag that
     shows True if there is a change in address and False otherwise
-    while index 1 is for transactionid if exist
+    while index 1 is for transactionid.
     """
     events = customer_data.to_dict()[0]
     lat_lon_cordinates = set()
