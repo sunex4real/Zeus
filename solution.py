@@ -30,7 +30,6 @@ def fetch_data_from_gcs(gcs_path):
     """
     logging.info("Fetching Data From GCS")
     data = dd.read_parquet(gcs_path, engine="pyarrow")
-    data = data.compute()
     return data
 
 
@@ -68,10 +67,7 @@ def get_session_details(customer_data):
         )
         transactionid.update([transaction["value"] for transaction in custom_dimensions if transaction["index"] == 36])
     # checking the unique latitude and logitude to see if its greater than 2
-    if len(lat_lon_cordinates) > 2:
-        return (True, transactionid.pop() if len(transactionid) > 0 else None)
-    else:
-        return (False, transactionid.pop() if len(transactionid) > 0 else None)
+    return (True if len(lat_lon_cordinates) > 2 else False, transactionid.pop() if len(transactionid) > 0 else None)
 
 
 def get_transaction_details(transactionid):
@@ -88,10 +84,12 @@ def get_transaction_details(transactionid):
     tuple: (Boolean, Boolean) where index 0 is for order placement
     and index 1 is for order delivered.
     """
+    # Input Validation
     if transactionid is None:
         return (False, False)
     # Fetch data from gcs
     transaction_data = fetch_data_from_gcs(TXN_PATH)
+    transaction_data = transaction_data.compute()
     logging.info("Computing Transaction Details")
     transaction_data = transaction_data[transaction_data.frontendOrderId == transactionid]
     # Check if order was received on the backend
@@ -125,7 +123,8 @@ def main(userid):
         # input validation, return empty response if userid not in parquet
         if len(customer_data.index) == 0:
             return response
-
+        customer_data = customer_data.compute()
+        # Getting the latest record case when this vistor appears more than once
         customer_data = customer_data.nlargest(1, "visitStartTime")
         address_changed, transactionid = get_session_details(customer_data["hit"])
         order_placed, order_delivered = get_transaction_details(transactionid)
