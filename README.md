@@ -1,6 +1,6 @@
 # Zeus
 
-This repo contains solution to the GA task
+This repo contains solution to the Google Analytics task
 
 ## Setup
 
