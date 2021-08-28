@@ -1,9 +1,18 @@
 import os
+import sys
+import logging
 import dask.dataframe as dd
 from argparse import ArgumentParser
 
-GA_PATH = os.environ["GA_BUCKET_PATH"]
-TXN_PATH = os.environ["TXN_BUCKET_PATH"]
+logging.basicConfig(level=logging.DEBUG, filename="zeus.log", format="%(asctime)s %(levelname)s:%(message)s")
+
+# Ensure all required environment variables are set
+try:
+    GA_PATH = os.environ["GA_BUCKET_PATH"]
+    TXN_PATH = os.environ["TXN_BUCKET_PATH"]
+except KeyError:
+    logging.error("Unable to Load Environment Variables (GA_BUCKET_PATH,TXN_BUCKET_PATH)")
+    sys.exit(1)
 
 
 def fetch_data_from_gcs(gcs_path):
@@ -19,6 +28,7 @@ def fetch_data_from_gcs(gcs_path):
     ----------
     :Pandas Dataframe
     """
+    logging.info("Fetching Data From GCS")
     data = dd.read_parquet(gcs_path, engine="pyarrow")
     data = data.compute()
     return data
@@ -42,6 +52,7 @@ def get_session_details(customer_data):
     shows True if there is a change in address and False otherwise
     while index 1 is for transactionid.
     """
+    logging.info("Computing Session Details")
     events = customer_data.to_dict()[0]
     lat_lon_cordinates = set()
     transactionid = set()
@@ -56,11 +67,11 @@ def get_session_details(customer_data):
             ]
         )
         transactionid.update([transaction["value"] for transaction in custom_dimensions if transaction["index"] == 36])
-
+    # checking the unique latitude and logitude to see if its greater than 2
     if len(lat_lon_cordinates) > 2:
-        return (True, transactionid.pop())
+        return (True, transactionid.pop() if len(transactionid) > 0 else None)
     else:
-        return (False, transactionid.pop())
+        return (False, transactionid.pop() if len(transactionid) > 0 else None)
 
 
 def get_transaction_details(transactionid):
@@ -77,8 +88,11 @@ def get_transaction_details(transactionid):
     tuple: (Boolean, Boolean) where index 0 is for order placement
     and index 1 is for order delivered.
     """
+    if transactionid is None:
+        return (False, False)
     # Fetch data from gcs
     transaction_data = fetch_data_from_gcs(TXN_PATH)
+    logging.info("Computing Transaction Details")
     transaction_data = transaction_data[transaction_data.frontendOrderId == transactionid]
     # Check if order was received on the backend
     if len(transaction_data.index) == 0:

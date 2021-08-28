@@ -8,5 +8,6 @@ COPY . .
 RUN python3 -m pip install --user pipenv
 RUN python3 -m pipenv install "dask[complete]" 
 RUN python3 -m pipenv install pyarrow 
+RUN python3 -m pipenv install pandas 
 
 COPY . /Zeus/
